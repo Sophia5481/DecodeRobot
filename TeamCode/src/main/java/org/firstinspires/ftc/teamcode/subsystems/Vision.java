@@ -1,0 +1,471 @@
+package org.firstinspires.ftc.teamcode.subsystems;
+
+import static org.firstinspires.ftc.robotcore.external.BlocksOpModeCompanion.hardwareMap;
+
+import android.graphics.Canvas;
+import android.util.Log;
+import android.util.Size;
+
+import com.arcrobotics.ftclib.command.SubsystemBase;
+import com.arcrobotics.ftclib.hardware.ServoEx;
+import com.arcrobotics.ftclib.hardware.SimpleServo;
+import com.qualcomm.robotcore.hardware.HardwareMap;
+
+import org.firstinspires.ftc.robotcore.external.hardware.camera.WebcamName;
+import org.firstinspires.ftc.robotcore.internal.camera.calibration.CameraCalibration;
+import org.firstinspires.ftc.teamcode.Robot;
+import org.firstinspires.ftc.vision.VisionPortal;
+import org.firstinspires.ftc.vision.VisionProcessor;
+import org.firstinspires.ftc.vision.apriltag.AprilTagDetection;
+import org.firstinspires.ftc.vision.apriltag.AprilTagProcessor;
+import org.opencv.calib3d.Calib3d;
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+
+import java.util.List;
+
+// Turning Vision into a subsystem ran into some problems so its commented out here for now
+public class Vision extends SubsystemBase {
+    private Vision.UndistortPipeline pipeline;
+    private AprilTagProcessor aprilTag;
+    private VisionPortal visionPortal;
+    // servo that turns the camera so it can look at the april tags
+    private ServoEx miniTurret;
+    private static double TURRET_MIN_ANGLE = 0.0;
+    private static double TURRET_MAX_ANGLE = 180.0;
+    private static double TELE_ANGLE = 173.0;
+    private static double RED_AUTO_ANGLE = 75.0; //100.0
+    private static double BLUE_AUTO_ANGLE = 10.0;
+    private static double FAR_AUTO_ANGLE = 180.0;
+
+    private static double ROBOT_LENGTH = 16.625;
+    private static double ROBOT_WIDTH = 17.125;
+
+    public Vision(final HardwareMap hMap) {
+        miniTurret = new SimpleServo(hMap, "miniTurret", TURRET_MIN_ANGLE, TURRET_MAX_ANGLE);
+        setupVisionPortal(hMap);
+    }
+
+    public void init(boolean teleop, boolean redAlliance) {
+        if (teleop) {
+            miniTurret.turnToAngle(TELE_ANGLE);
+            visionPortal.setProcessorEnabled(aprilTag, true);
+        } else if (redAlliance && !Robot.FAR_AUTO) {
+            miniTurret.turnToAngle(RED_AUTO_ANGLE);
+        } else if (!redAlliance && !Robot.FAR_AUTO){
+            miniTurret.turnToAngle(BLUE_AUTO_ANGLE);
+        }
+        else {
+            miniTurret.turnToAngle(FAR_AUTO_ANGLE);
+        }
+    }
+
+    /**
+     * Initialize the AprilTag processor.
+     */
+    private void setupVisionPortal(final HardwareMap hMap) {
+
+        // Create the AprilTag processor.
+        aprilTag = new AprilTagProcessor.Builder().build();
+
+        // Adjust Image Decimation to trade-off detection-range for detection-rate.
+        // eg: Some typical detection data using a Logitech C920 WebCam
+        // Decimation = 1 ..  Detect 2" Tag from 10 feet away at 10 Frames per second
+        // Decimation = 2 ..  Detect 2" Tag from 6  feet away at 22 Frames per second
+        // Decimation = 3 ..  Detect 2" Tag from 4  feet away at 30 Frames Per Second (default)
+        // Decimation = 3 ..  Detect 5" Tag from 10 feet away at 30 Frames Per Second (default)
+        // Note: Decimation can be changed on-the-fly to adapt during a match.
+        aprilTag.setDecimation(1);
+
+        // Create the vision portal by using a builder.
+        VisionPortal.Builder builder = new VisionPortal.Builder();
+
+        // Set the camera.
+        builder.setCamera(hMap.get(WebcamName.class, "Webcam 1"));
+
+        // Choose a camera resolution. Not all cameras support all resolutions.
+        builder.setCameraResolution(new Size(1920, 1080));
+
+        // Enable the RC preview (LiveView).  Set "false" to omit camera monitoring.
+        //builder.enableLiveView(true);
+
+        // Set the stream format; MJPEG uses less bandwidth than default YUY2.
+        builder.setStreamFormat(VisionPortal.StreamFormat.YUY2);
+
+        // Choose whether or not LiveView stops if no processors are enabled.
+        // If set "true", monitor shows solid orange screen if no processors enabled.
+        // If set "false", monitor shows camera view without annotations.
+        //builder.setAutoStopLiveView(false);
+
+        pipeline = new Vision.UndistortPipeline();
+
+        builder.addProcessor(pipeline);
+
+        // Set and enable the processor.
+        builder.addProcessor(aprilTag);
+
+        // Build the Vision Portal, using the above settings.
+        visionPortal = builder.build();
+//        FtcDashboard.getInstance().startCameraStream(visionPortal, 0);
+
+        // Disable or re-enable the aprilTag processor at any time.
+//        visionPortal.setProcessorEnabled(aprilTag, true);
+
+    }   // end method initAprilTag()
+
+    public int getAprilTagId(boolean redAlliance) {
+        while (pipeline == null || !pipeline.initialized) {
+
+            // Wait for the pipeline to initialize
+        }
+
+        List<AprilTagDetection> currentDetections = aprilTag.getDetections();
+        Log.d("# AprilTags Detected", "" + currentDetections.size());
+
+        // based on testing, the april tag with the lowest relative angle is the one we want on the blue side
+        // Atag with the highest relative angle is the one we want on the red side
+        double bestRelativeAngle = redAlliance ? Double.MIN_VALUE : Double.MAX_VALUE;
+        int id = 21;
+        for (AprilTagDetection detection : currentDetections) {
+            if (detection.id == 24 || detection.id == 20) {
+                continue;
+            }
+            else if (Robot.FAR_AUTO){
+                return detection.id;
+            }
+            else {
+                double[] undistortedPixels = undistortPixel(detection.center.x, detection.center.y);
+                double u_undistorted = undistortedPixels[0];
+                double v_undistorted = undistortedPixels[1];
+
+                double cx = pipeline.newCameraMatrix.get(0, 2)[0];
+                double cy = pipeline.newCameraMatrix.get(1, 2)[0];
+
+                // Make this consistent with teamwebcamcalibrations.xml
+                // Camera angle is from the horizontal, aimed upwards. Hard-coded focal length
+                // Focal lengths from calibration: 786.357, 785.863; changed to work a bit better
+                double[] realWorldPosition = calculateTargetPosition3D(
+                    u_undistorted, v_undistorted,
+                    786.357, 785.863,
+                    cx, cy,
+                    31.5, 0.6108,
+                    75);
+
+                double relativeAngle = Math.atan2(realWorldPosition[1], realWorldPosition[0]);
+
+                if (redAlliance) {
+                    if (relativeAngle > bestRelativeAngle) {
+                        bestRelativeAngle = relativeAngle;
+                        id = detection.id;
+                    }
+                } else {
+                    if (relativeAngle < bestRelativeAngle) {
+                        bestRelativeAngle = relativeAngle;
+                        id = detection.id;
+                    }
+                }
+            }
+        }
+        return id;
+    }
+
+    public AprilTagInfo getRealWorldPosition(boolean redAlliance) {
+        while (pipeline == null || !pipeline.initialized) {
+            // Wait for the pipeline to initialize
+            Log.d("getRealWorldPosition::Vision ", "Waiting for pipeline to initialize");
+        }
+        List<AprilTagDetection> currentDetections = aprilTag.getDetections();
+        Log.d("getRealWorldPosition::# AprilTags Detected", "" + currentDetections.size());
+        // Step through the list of detections and display info for each one.
+        for (AprilTagDetection detection : currentDetections) {
+            if (redAlliance && detection.id == 24 || !redAlliance && detection.id == 20) {
+                double[] undistortedPixels = undistortPixel(detection.center.x, detection.center.y);
+                double u_undistorted = undistortedPixels[0];
+                double v_undistorted = undistortedPixels[1];
+
+                Log.d("getRealWorldPosition::ID: ", String.format("\n==== (ID %d)", detection.id));
+                Log.d("getRealWorldPosition::Detection Center: ", String.format("Center %6.0f %6.0f   (pixels)", detection.center.x, detection.center.y));
+
+                double fx = pipeline.newCameraMatrix.get(0, 0)[0];
+                double fy = pipeline.newCameraMatrix.get(1, 1)[0];
+                double cx = pipeline.newCameraMatrix.get(0, 2)[0];
+                double cy = pipeline.newCameraMatrix.get(1, 2)[0];
+
+                // Make this consistent with teamwebcamcalibrations.xml
+                // Camera angle is from the horizontal, aimed upwards. Hard-coded focal length
+                // Focal lengths from calibration: 786.357, 785.863; changed to work a bit better
+                double[] realWorldPosition = calculateTargetPosition3D(
+                    u_undistorted, v_undistorted,
+                    786.357, 785.863,
+                    cx, cy,
+                    31.5, 0,
+                    75);
+
+                double relativeAngle = Math.atan2(realWorldPosition[1] + ROBOT_LENGTH / 2, realWorldPosition[0] + ROBOT_WIDTH / 2);
+                Log.d("getRealWorldPosition::Relative Angle", String.format("%6.2f", Math.toDegrees(relativeAngle)));
+
+                Log.d("getRealWorldPosition::Real world position: ", String.format("Real World Position %6.2f %6.2f", realWorldPosition[0], realWorldPosition[1]));
+                return new AprilTagInfo(realWorldPosition[0], realWorldPosition[1], relativeAngle, detection.id);
+            }
+        }
+        Log.d("getRealWorldPosition:: ", "No correct april tag found!");
+        // just to make java stop complaining at me
+        // if there are no detections, return 0.0
+        return null;
+        // end for() loop
+    }
+
+    /**
+     * Add telemetry about AprilTag detections.
+     */
+    public AprilTagInfo getAprilTagInfo() {
+
+        while (pipeline == null || !pipeline.initialized) {
+
+        }
+
+        List<AprilTagDetection> currentDetections = aprilTag.getDetections();
+        Log.d("# AprilTags Detected", "" + currentDetections.size());
+
+        // Step through the list of detections and display info for each one.
+        for (AprilTagDetection detection : currentDetections) {
+
+            double[] undistortedPixels = undistortPixel(detection.center.x, detection.center.y);
+            double u_undistorted = undistortedPixels[0];
+            double v_undistorted = undistortedPixels[1];
+
+            Log.d("ID: ", String.format("\n==== (ID %d)", detection.id));
+            Log.d("Detection Center: ", String.format("Center %6.0f %6.0f   (pixels)", detection.center.x, detection.center.y));
+
+            double fx = pipeline.newCameraMatrix.get(0, 0)[0];
+            double fy = pipeline.newCameraMatrix.get(1, 1)[0];
+            double cx = pipeline.newCameraMatrix.get(0, 2)[0];
+            double cy = pipeline.newCameraMatrix.get(1, 2)[0];
+
+            // Make this consistent with teamwebcamcalibrations.xml
+            // Camera angle is from the horizontal, aimed upwards. Hard-coded focal length
+            // Focal lengths from calibration: 786.357, 785.863; changed to work a bit better
+            double[] realWorldPosition = calculateTargetPosition3D(
+                u_undistorted, v_undistorted,
+                786.357, 785.863,
+                cx, cy,
+                31.5, 0.6108,
+                75);
+
+            double relativeAngle = Math.atan2(realWorldPosition[1], realWorldPosition[0]);
+            Log.d("Relative Angle", String.format("%6.2f", Math.toDegrees(relativeAngle)));
+            Log.d("Real world position: ", String.format("Real World Position %6.2f %6.2f", realWorldPosition[0], realWorldPosition[1]));
+
+            return new AprilTagInfo(realWorldPosition[0], realWorldPosition[1], relativeAngle, detection.id);
+        }
+        return null;
+        // end for() loop
+    }   // end method telemetryAprilTag()
+
+    public double[] calculateTargetPosition3D(
+        // u_p, v_p is pixel position, c_x, c_y is principal point, f_x, f_y is focal length
+        double u_p, double v_p,
+        double f_x, double f_y,
+        double c_x, double c_y,
+        double cameraHeight, double cameraAngleRad,
+        double targetHeight
+    ) {
+        // Convert pixel to normalized camera coordinates
+        double x_cam = (u_p - c_x) / f_x;
+        double y_cam = -(v_p - c_y) / f_y;
+        double z_cam = 1.0;
+
+        // Print all three in one telemetry statement
+        Log.d("Unrotated vector", String.format("%6.2f %6.2f %6.2f", x_cam, y_cam, z_cam));
+
+        // Rotate by camera tilt
+        double cos_tilt = Math.cos(cameraAngleRad);
+        double sin_tilt = Math.sin(cameraAngleRad);
+        double x_world_dir = x_cam;
+        double y_world_dir = y_cam * cos_tilt + z_cam * sin_tilt;
+        double z_world_dir = -y_cam * sin_tilt + z_cam * cos_tilt;
+
+        // Print rotated vector
+        Log.d("Rotated vector", String.format("%6.2f %6.2f %6.2f", x_world_dir, y_world_dir, z_world_dir));
+
+        // Find ray intersection with ground plane
+        if (Math.abs(y_world_dir) < 1e-9) {
+            return new double[]{0.0, 0.0};
+        }
+        double t = (targetHeight - cameraHeight) / y_world_dir;
+
+        Log.d("t", "" + t);
+
+        if (t <= 0) {
+            return new double[]{0.0, 0.0};
+        }
+
+        // Calculate ground position
+        double x_world = t * x_world_dir;
+        double z_world = t * z_world_dir;
+
+        return new double[]{x_world, z_world};
+    }
+
+    public class UndistortPipeline implements VisionProcessor {
+        public Mat cameraMatrix;
+        public Mat distCoeffs;
+        public Mat newCameraMatrix;
+
+        public double[] cameraMatrixArray;
+
+        private org.opencv.core.Size imageSize = new org.opencv.core.Size(1920, 1080); // adjust to your camera stream resolution
+
+        private boolean initialized = false;
+
+        @Override
+        public void init(int width, int height, CameraCalibration calibration) {
+            // Initialize distortion parameters (you need to calibrate beforehand)
+            cameraMatrix = new Mat(3, 3, CvType.CV_64F);
+            distCoeffs = new Mat(1, 5, CvType.CV_64F);
+
+            // Example values — replace with your own calibrated ones
+            cameraMatrix.put(0, 0, 1023.878f); // fx
+            cameraMatrix.put(0, 1, 0);
+            cameraMatrix.put(0, 2, 989.731f);
+            cameraMatrix.put(1, 0, 0);
+            cameraMatrix.put(1, 1, 1019.899f); // fy
+            cameraMatrix.put(1, 2, 501.663f);
+            cameraMatrix.put(2, 0, 0);
+            cameraMatrix.put(2, 1, 0);
+            cameraMatrix.put(2, 2, 1);
+
+            // Example distortion coefficients: k1, k2, p1, p2, k3
+            distCoeffs.put(0, 0, -0.370767f, 0.106516f, 0.000118f, -0.000542f, -0.012277f);
+
+            newCameraMatrix = Calib3d.getOptimalNewCameraMatrix(
+                cameraMatrix, distCoeffs, imageSize, 1, imageSize, null);
+
+            // void newCameraMatrix
+            newCameraMatrix = cameraMatrix;
+
+            initialized = true;
+        }
+
+        @Override
+        public Object processFrame(Mat input, long captureTimeNanos) {
+            if (!initialized) return null;
+
+            Mat undistorted = new Mat();
+            Calib3d.undistort(input, undistorted, cameraMatrix, distCoeffs, newCameraMatrix);
+
+            // (Optional) Do further image processing here
+            // e.g. detect apriltags, contours, colors, etc.
+
+            // Replace the input with undistorted image for display in the RC preview
+            undistorted.copyTo(input);
+            undistorted.release();
+            return null;
+        }
+
+        @Override
+        public void onDrawFrame(Canvas canvas, int onscreenWidth, int onscreenHeight,
+                                float scaleBmpPxToCanvasPx, float scaleCanvasDensity, Object userContext) {
+            // You can draw overlays here if you want (optional)
+        }
+    }
+
+    public class AprilTagInfo {
+        private double x;
+        private double y;
+        private double angle;
+        private double id;
+
+        public AprilTagInfo(double x, double y, double angle, double id) {
+            this.x = x;
+            this.y = y;
+            this.angle = angle;
+            this.id = id;
+        }
+
+        public double getX() {
+            return x;
+        }
+
+        public double getY() {
+            return y;
+        }
+
+        public double getAngle() {
+            return angle;
+        }
+
+        public double getId() {
+            return id;
+        }
+    }
+
+    /**
+     * Undistorts a single pixel coordinate using the camera's calibration parameters.
+     *
+     * @param u_distorted The x-coordinate of the distorted pixel.
+     * @param v_distorted The y-coordinate of the distorted pixel.
+     * @return A double array containing the [x, y] coordinates of the undistorted pixel.
+     */
+    private double[] undistortPixel(double u_distorted, double v_distorted) {
+        // Get camera calibration parameters from the pipeline
+        double fx = pipeline.cameraMatrix.get(0, 0)[0];
+        double fy = pipeline.cameraMatrix.get(1, 1)[0];
+        double cx = pipeline.cameraMatrix.get(0, 2)[0];
+        double cy = pipeline.cameraMatrix.get(1, 2)[0];
+
+        // Get distortion coefficients
+        double k1 = pipeline.distCoeffs.get(0, 0)[0];
+        double k2 = pipeline.distCoeffs.get(0, 1)[0];
+        double p1 = pipeline.distCoeffs.get(0, 2)[0];
+        double p2 = pipeline.distCoeffs.get(0, 3)[0];
+        double k3 = pipeline.distCoeffs.get(0, 4)[0];
+
+        // Normalize distorted pixel coordinates
+        double x_distorted = (u_distorted - cx) / fx;
+        double y_distorted = (v_distorted - cy) / fy;
+
+        // Iteratively solve for undistorted coordinates using Newton-Raphson method
+        double x_undistorted = x_distorted;
+        double y_undistorted = y_distorted;
+
+        for (int i = 0; i < 5; i++) {
+            double r_sq = x_undistorted * x_undistorted + y_undistorted * y_undistorted;
+            double r_fourth = r_sq * r_sq;
+
+            // Radial distortion factor
+            double radial = 1.0 + k1 * r_sq + k2 * r_fourth + k3 * r_sq * r_fourth;
+
+            // Tangential distortion factors
+            double tangential_x = 2.0 * p1 * x_undistorted * y_undistorted + p2 * (r_sq + 2.0 * x_undistorted * x_undistorted);
+            double tangential_y = p1 * (r_sq + 2.0 * y_undistorted * y_undistorted) + 2.0 * p2 * x_undistorted * y_undistorted;
+
+            // Distorted coordinates based on current estimate
+            double x_dist_est = x_undistorted * radial + tangential_x;
+            double y_dist_est = y_undistorted * radial + tangential_y;
+
+            // Update estimate
+            x_undistorted = x_distorted - (x_dist_est - x_undistorted);
+            y_undistorted = y_distorted - (y_dist_est - y_undistorted);
+        }
+
+        // Convert back to pixel coordinates using the new camera matrix
+        double u_undistorted = x_undistorted * pipeline.newCameraMatrix.get(0, 0)[0] + pipeline.newCameraMatrix.get(0, 2)[0];
+        double v_undistorted = y_undistorted * pipeline.newCameraMatrix.get(1, 1)[0] + pipeline.newCameraMatrix.get(1, 2)[0];
+
+        return new double[]{u_undistorted, v_undistorted};
+    }
+
+    // stops vision to save resources (check here: https://ftc-docs.firstinspires.org/en/latest/apriltag/vision_portal/visionportal_cpu_and_bandwidth/visionportal-cpu-and-bandwidth.html#close-visionportal)
+    public void stopVision() {
+        visionPortal.setProcessorEnabled(aprilTag, false);
+    }
+
+    public void startVision() {
+        visionPortal.setProcessorEnabled(aprilTag, true);
+    }
+
+    public VisionPortal getVisionPortal() {
+        return visionPortal;
+    }
+}

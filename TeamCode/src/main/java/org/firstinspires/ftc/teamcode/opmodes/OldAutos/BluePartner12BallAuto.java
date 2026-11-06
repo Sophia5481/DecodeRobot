@@ -1,0 +1,297 @@
+//package org.firstinspires.ftc.teamcode.opmodes;
+//
+//import android.util.Log;
+//
+//import com.arcrobotics.ftclib.command.Command;
+//import com.arcrobotics.ftclib.command.CommandOpMode;
+//import com.arcrobotics.ftclib.command.ConditionalCommand;
+//import com.arcrobotics.ftclib.command.InstantCommand;
+//import com.arcrobotics.ftclib.command.ParallelCommandGroup;
+//import com.arcrobotics.ftclib.command.ParallelRaceGroup;
+//import com.arcrobotics.ftclib.command.SequentialCommandGroup;
+//import com.arcrobotics.ftclib.command.WaitCommand;
+//import com.arcrobotics.ftclib.util.Timing;
+//import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
+//
+//import org.firstinspires.ftc.teamcode.Robot;
+//import org.firstinspires.ftc.teamcode.commands.FollowPathCommand;
+//import org.firstinspires.ftc.teamcode.commands.IdleShooterCommand;
+//import org.firstinspires.ftc.teamcode.commands.IntakeCommand;
+//import org.firstinspires.ftc.teamcode.commands.Memory;
+//import org.firstinspires.ftc.teamcode.commands.RapidFireShoot;
+//import org.firstinspires.ftc.teamcode.commands.ReversePurpleCommand;
+//import org.firstinspires.ftc.teamcode.commands.StartShooterCommand;
+//import org.firstinspires.ftc.teamcode.commands.StopShootingCommand;
+//import org.firstinspires.ftc.teamcode.pedroPathing.follower.Follower;
+//import org.firstinspires.ftc.teamcode.pedroPathing.localization.Pose;
+//import org.firstinspires.ftc.teamcode.pedroPathing.pathGeneration.BezierCurve;
+//import org.firstinspires.ftc.teamcode.pedroPathing.pathGeneration.BezierLine;
+//import org.firstinspires.ftc.teamcode.pedroPathing.pathGeneration.Path;
+//import org.firstinspires.ftc.teamcode.pedroPathing.pathGeneration.PathCallback;
+//import org.firstinspires.ftc.teamcode.pedroPathing.pathGeneration.PathChain;
+//import org.firstinspires.ftc.teamcode.pedroPathing.pathGeneration.Point;
+//
+//import java.util.concurrent.TimeUnit;
+//
+//
+//@Autonomous(name = "Blue ELIMS Near 12 Ball Auto 🌍", group = "Auto")
+//public class BluePartner12BallAuto extends CommandOpMode {
+//    private Follower follower;
+//    private Robot robot;
+//
+//    private static double FULL_SPEED = 0.9;
+//    private static double MEDIUM_SPEED = 0.75;
+//    private static double SLOW = 0.4;
+//
+////    private int AprilTagID = 21;
+//
+//    private double startHeading = Math.toRadians(180.0 + 52.0);
+//    // After converting to pedro coordinate system, add 72.0 to both x and y
+//    // The center of the field is now (72, 72), not (0, 0)
+//    Point start = new Point(58.06, 46.05, Point.CARTESIAN);
+//    public static Point end = new Point(24.5, 32.0, Point.CARTESIAN);
+//    public static double endHeading = Math.toRadians(180.0 + 90.0);
+//
+//    // The initial scoring position is adjusted for drift
+//    public static Point scoring = new Point(24.5, 12.0, Point.CARTESIAN);
+//    // scoring point adjusted for drift after intaking
+//    public static Point cycleScoring = new Point(24.5, 12.0, Point.CARTESIAN);
+//    public static double scoringHeading = Math.toRadians(180.0 + 43.0);
+//    public static double cycleScoringHeading = Math.toRadians(180 + 45.0);
+//
+//    public static double intakeHeading = Math.toRadians(180.0 - 90.0);
+//    // intake the second row of balls first before opening the gate
+//    public static Point intake1 = new Point(20.0 - 24.0 - 1.0 + 1.5, 22.0, Point.CARTESIAN);
+//    public static Point intake2 = new Point(20.0, 18.0, Point.CARTESIAN);
+//    public static Point intake3 = new Point(20.0 - 24.0 * 2, 23.0, Point.CARTESIAN);
+//    // open gate points
+//    // drives back 12 inches
+//    public static Point gatePoint = new Point(20.0 - 24.0 - 1.0 + 3.0, 22.0 + 31.5 - 10.0, Point.CARTESIAN);
+//    // aligns with gate
+//    public static Point gatePoint2 = new Point(20.0 - 24.0 - 1.0 + 7.0, 22.0 + 31.5 - 10.0, Point.CARTESIAN);
+//    public static Point gatePoint3 = new Point(20.0 - 24.0 - 1.0 + 7.0, 22.0 + 31.5 - 6.0, Point.CARTESIAN);
+//    public static Point scoringControlPoint = new Point(20.0 - 24.0 - 1.0, 18.0, Point.CARTESIAN);
+//
+//    public static double gateOpeningHeading = 180.0 - 20.0;
+//
+//    private Timing.Timer timer = new Timing.Timer(30, TimeUnit.SECONDS);
+//
+//    public static long varWaitTime = 1000;
+//
+//    @Override
+//    public void initialize() {
+//        telemetry.addLine("Initializing...");
+//        telemetry.update();
+//
+//        follower = new Follower(hardwareMap);
+//        follower.setStartingPose(new Pose(start.getX(), start.getY(), startHeading));
+//        follower.setMaxPower(FULL_SPEED);
+//        Robot.RED_ALLIANCE = false;
+//        Robot.FAR_AUTO = false;
+//        Robot.AUTO_NOSORTING = true;
+//        robot = new Robot(true, hardwareMap);
+//
+//        while (opModeInInit()) {
+//            telemetry.addLine("NO SORTING");
+//            telemetry.update();
+//        }
+//
+//        waitForStart();
+//        timer.start();
+//
+//        schedule(
+//                new SequentialCommandGroup(
+//                        scorePreload(),
+//                        intakeAndScore(1),
+//                        intakeAndScore(2),
+//                        intakeAndScore(3),
+//                        new ParallelRaceGroup(
+//                                park(),
+//                                new StopShootingCommand(robot.getShooter())
+//                        )
+//                )
+//        );
+//    }
+//
+//    @Override
+//    public void run() {
+//        super.run();
+//        Log.d("Follower ", "Heading value: " + Math.toDegrees(follower.getTotalHeading()));
+//        Log.d("Follower ", "Pose: " + follower.getPose().toString());
+//        follower.update();
+//        follower.drawOnDashBoard();
+//        robot.resetCache();
+//        // start tracking end pose for correct field centric drive
+//        //
+//        if (timer.elapsedTime() > 26 && timer.elapsedTime() < 29.9) {
+//            Memory.autoEndPose = follower.getPose();
+//            Log.d("Auto End Pose: ", "X: " + Memory.autoEndPose.getX() + "Y: " + Memory.autoEndPose.getY() + "Heading: " + Memory.autoEndPose.getHeading());
+//        }
+//    }
+//
+//    private Command scorePreload() {
+//        Path toScoring = new Path(new BezierLine(
+//                start,
+//                scoring)
+//        );
+//        toScoring.setLinearHeadingInterpolation(startHeading, scoringHeading);
+//
+//        return new SequentialCommandGroup(
+//                new ParallelCommandGroup(
+//                        new FollowPathCommand(
+//                                follower, toScoring
+//                        ),
+//                        new StartShooterCommand(robot.getShooter(), false).withTimeout(1800)
+//                ),
+//                new InstantCommand(() -> {
+//                    Log.d("Scoring Position: ", "X: " + follower.getPose().getX() + "Y: " + follower.getPose().getY() + "Heading: " + Math.toDegrees(follower.getPose().getHeading()));
+//                }),
+//                new ParallelRaceGroup(
+//                    new RapidFireShoot(robot.getFeeder(), robot.getShooter(), robot.getTransfer(), false),
+//                    new IntakeCommand(robot.getIntake(), robot.getTransfer())
+//                )
+//        );
+//    }
+//
+//    private Command intakeAndScore(int cycle) {
+//        Point intakePosition = intake1;
+//        switch (cycle) {
+//            case 1:
+//                intakePosition = intake1;
+//                break;
+//            case 2:
+//                intakePosition = intake2;
+//                break;
+//            case 3:
+//                intakePosition = intake3;
+//                break;
+//
+//        }
+//
+//        // drive from scoring to intake position
+//        Path toIntake = new Path(new BezierLine(
+//                cycle == 1 ? scoring : cycleScoring,
+//                intakePosition)
+//        );
+//        toIntake.setLinearHeadingInterpolation(cycle == 1 ? scoringHeading : cycleScoringHeading, intakeHeading);
+//
+//        // drive forward to intake balls
+//        Path intakeBalls = new Path(new BezierLine(
+//                intakePosition,
+//                incrementY(intakePosition, cycle == 1 || cycle == 3 ? 31.5 : 29)
+//        ));
+//        intakeBalls.setConstantHeadingInterpolation(intakeHeading);
+//
+//        Path toScoring;
+//        // drive from intake position to scoring position
+//        if (cycle == 1) {
+//            // special path to avoid hitting the gate while driving
+//            toScoring = new Path(new BezierCurve(
+//                    incrementY(intakePosition, cycle == 1 || cycle == 3 ? 31.5 : 29),
+//                    scoringControlPoint,
+//                    cycleScoring)
+//            );
+//            toScoring.setLinearHeadingInterpolation(intakeHeading, cycleScoringHeading);
+//        } else {
+//            toScoring = new Path(new BezierLine(
+//                    incrementY(intakePosition, cycle == 1 || cycle == 3 ? 31.5 : 29),
+//                    cycleScoring)
+//            );
+//            toScoring.setLinearHeadingInterpolation(intakeHeading, cycleScoringHeading);
+//        }
+//
+//        Path toGate = new Path(new BezierCurve(
+//                incrementY(intakePosition, cycle == 1 || cycle == 3 ? 31.5 : 29),
+//                gatePoint,
+//                gatePoint2
+//        ));
+//        toGate.setConstantHeadingInterpolation(intakeHeading);
+//
+//        Path openGate = new Path(new BezierLine(
+//            gatePoint2,
+//            gatePoint3
+//        ));
+//
+//        openGate.setZeroPowerAccelerationMultiplier(4.5);
+//
+//        PathChain gatePath = new PathChain(
+//            toGate, openGate
+//        );
+//        gatePath.setCallbacks(new PathCallback(
+//            0.9, () -> {robot.getIntake().stopIntake();}, PathCallback.PARAMETRIC, 0
+//        ));
+//
+//        return new SequentialCommandGroup(
+//                // drive to intaking
+//                new ParallelRaceGroup(
+////                new StopShootingCommand(robot.getShooter()),
+//                        new IdleShooterCommand(robot.getShooter(), false),
+//                        new FollowPathCommand(follower, toIntake)
+//                ),
+//                // intake balls, drive to scoring
+//                new ParallelCommandGroup(
+//                        new IntakeCommand(robot.getIntake(), robot.getTransfer()),
+//                        new SequentialCommandGroup(
+//                                new InstantCommand(() -> {
+//                                    follower.setMaxPower(MEDIUM_SPEED);
+//                                }),
+//                                new FollowPathCommand(follower, intakeBalls).withTimeout(2000),
+//
+//                                new ConditionalCommand(
+//                                        new SequentialCommandGroup(
+//                                                new InstantCommand(() -> {
+//                                                    follower.setMaxPower(MEDIUM_SPEED);
+//                                                }),
+//                                                new InstantCommand(() -> Log.d("autonomous", "entered!")),
+//                                                new FollowPathCommand(follower, gatePath).withTimeout(3000),
+//                                                new WaitCommand(varWaitTime)
+////                                                new WaitCommand(100)
+//                                        ),
+//                                        new InstantCommand(() -> {}),
+//                                        () -> cycle == 1
+//                                ),
+////                                new WaitCommand(1500),
+//                                new InstantCommand(() -> {
+//                                    follower.setMaxPower(FULL_SPEED);
+//                                }),
+//                                // drive to scoring & prepare shooter
+//                                // in the middle of the path (750ms later) stop the intake & transfer
+//                                new ParallelCommandGroup(
+//                                        new ParallelCommandGroup(
+//                                                new FollowPathCommand(follower, toScoring),
+//                                                new StartShooterCommand(robot.getShooter(), false).withTimeout(2000)
+//                                        ),
+//                                        new SequentialCommandGroup(
+//                                                new WaitCommand(750),
+//                                                new InstantCommand(robot.getIntake()::stopIntake),
+//                                                new ReversePurpleCommand(robot.getTransfer(), 500)
+//                                        )
+//                                )
+//                        )
+//                ),
+//                new InstantCommand(() -> {
+//                    Log.d("Scoring Position: ", "X: " + follower.getPose().getX() + "Y: " + follower.getPose().getY() + "Heading: " + Math.toDegrees(follower.getPose().getHeading()));
+//                }),
+//                new ParallelRaceGroup(
+//                        new RapidFireShoot(robot.getFeeder(), robot.getShooter(), robot.getTransfer(), false),
+//                        new IntakeCommand(robot.getIntake(), robot.getTransfer())
+//                )
+//        );
+//    }
+//
+//    private Command park() {
+//        Path parking = new Path(new BezierLine(
+//                cycleScoring,
+//                end
+//        )
+//        );
+//        parking.setLinearHeadingInterpolation(cycleScoringHeading, endHeading, 0.5);
+//        return new FollowPathCommand(
+//                follower, parking
+//        );
+//    }
+//
+//    private Point incrementY(Point point, double increment) {
+//        return new Point(point.getX(), point.getY() + increment, Point.CARTESIAN);
+//    }
+//}
